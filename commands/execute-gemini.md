@@ -1,13 +1,17 @@
-Queue the current plan for Gemini execution.
+Execute the latest plan with Gemini CLI directly in this session. The Claude session stays open after Gemini finishes so the user can assign the next task.
 
 Steps:
-1. Find the most recently modified `.md` file in `docs/superpowers/plans/` using the Glob tool.
-2. If no plan file is found, output an error and stop.
-3. Write the exact relative plan file path (e.g. `docs/superpowers/plans/2026-03-27-example.md`) to `docs/superpowers/logs/.cplan-execute` using the Write tool. The file must contain only the path, nothing else.
-4. Output exactly this (replace `<path>` with the actual path):
+1. Use Glob to find the most recently modified `.md` file in `docs/superpowers/plans/`. If none found, output an error and stop.
+2. Show the plan filename and first 15 lines as a preview.
+3. Run the following Bash command (replace `<PLAN_FILE>` with the actual relative path):
+   ```
+   gemini --model gemini-2.5-flash-latest --yolo -p "You are an implementation agent. Read the plan file and execute it step by step. Check off each task as you complete it. If a step fails, log the error and continue to the next step.\n\nPlan file to read and execute: <PLAN_FILE>"
+   ```
+4. If the command fails AND the output contains `MODEL_CAPACITY_EXHAUSTED`, `RESOURCE_EXHAUSTED`, or `429`, retry once with `--model gemini-2.0-flash` using the same prompt.
+5. After Gemini finishes (success or failure), output:
+   ```
+   ✓ Gemini 실행 완료: <PLAN_FILE>
 
-```
-✓ Gemini 실행 예약: <path>
-
-/exit 를 입력하면 Gemini가 자동으로 plan을 실행합니다.
-```
+   다음 작업을 설명해 주세요.
+   새 plan을 작성한 뒤 /execute-gemini 로 계속 실행하거나, /exit 로 종료할 수 있습니다.
+   ```

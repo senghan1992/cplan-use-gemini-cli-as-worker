@@ -269,53 +269,23 @@ main() {
 
   # 직접 실행 (서브쉘 아님) — stdin/stdout 그대로 터미널에 연결
   command claude \
-    --tools "Read,Glob,Grep,Write" \
+    --tools "Read,Glob,Grep,Write,Bash(gemini *)" \
     --append-system-prompt "$system_prompt" \
     || true
 
   echo ""
   echo -e "${CYAN}════════════════════════════════════════════════════════${NC}"
 
-  # /execute-gemini 트리거 파일 확인
-  local trigger_file="$LOG_DIR/.cplan-execute"
+  # 세션 종료 후 미실행 plan 안내
+  local after_plans
+  after_plans=$(ls -1 "$PLAN_DIR"/*.md 2>/dev/null || true)
 
-  if [[ -f "$trigger_file" ]]; then
-    # /execute-gemini 로 실행 요청됨 → 확인 없이 자동 실행
-    local triggered_plan
-    triggered_plan=$(cat "$trigger_file")
-    rm -f "$trigger_file"
+  local new_plan
+  new_plan=$(comm -13 <(echo "$before_plans" | sort) <(echo "$after_plans" | sort) | head -1)
 
-    if [[ -f "$triggered_plan" ]]; then
-      log_ok "Plan: $triggered_plan"
-      echo ""
-      echo -e "${BOLD}── Plan 요약 ──${NC}"
-      head -20 "$triggered_plan"
-      echo -e "${BOLD}───────────────${NC}"
-      echo ""
-      run_gemini_execute "$triggered_plan"
-    else
-      log_warn "Plan 파일을 찾을 수 없음: $triggered_plan"
-      log_info "수동 실행: cplan -g"
-    fi
-  else
-    # /execute-gemini 없이 종료됨 → 새 plan 감지 후 안내
-    local after_plans
-    after_plans=$(ls -1 "$PLAN_DIR"/*.md 2>/dev/null || true)
-
-    local new_plan
-    new_plan=$(comm -13 <(echo "$before_plans" | sort) <(echo "$after_plans" | sort) | head -1)
-
-    if [[ -z "$new_plan" ]]; then
-      new_plan=$(find_latest_plan)
-    fi
-
-    if [[ -n "$new_plan" && -f "$new_plan" ]]; then
-      log_ok "Plan 생성됨: $new_plan"
-      log_info "Gemini로 실행: cplan -g $new_plan"
-    else
-      log_warn "Plan 파일이 생성되지 않았습니다."
-      log_info "cplan 재실행 후 plan 완성 시 /execute-gemini 를 입력하세요."
-    fi
+  if [[ -n "$new_plan" && -f "$new_plan" ]]; then
+    log_info "미실행 Plan 감지: $new_plan"
+    log_info "Gemini로 실행하려면: cplan -g $new_plan"
   fi
 }
 
