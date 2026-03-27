@@ -1,0 +1,18 @@
+# 민감 정보
+.env
+*.env
+.claude/env
+
+# bkit 상태 파일 (로컬 전용)
+.bkit/
+
+# Claude Code 로컬 설정
+.claude/settings.local.json
+
+# 로그
+docs/superpowers/logs/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
