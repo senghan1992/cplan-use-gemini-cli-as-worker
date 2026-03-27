@@ -78,7 +78,13 @@ if [[ "$SKIP_GEMINI_INSTALL" == true ]]; then
 elif command -v gemini &>/dev/null; then
   log_ok "gemini CLI: 이미 설치됨"
 else
-  npm install -g @google/gemini-cli
+  log_info "@google/gemini-cli 설치 중..."
+  npm install -g @google/gemini-cli || {
+    log_error "gemini-cli 설치 실패. sudo 권한이 필요할 수 있습니다: sudo npm install -g @google/gemini-cli"
+    exit 1
+  }
+  # 설치 직후 명령어를 찾을 수 있도록 해시 테이블 갱신
+  hash -r 2>/dev/null || true
   log_ok "gemini-cli 설치 완료"
 fi
 
@@ -123,6 +129,12 @@ echo "    API 키 없이 Enter"
 echo ""
 read -rp "  GEMINI_API_KEY (없으면 Enter → OAuth 진행): " gemini_key </dev/tty
 
+# 기존 인증 정보 확인
+EXISTING_OAUTH=false
+if [[ -f "$HOME/.gemini/oauth_creds.json" || -f "$HOME/.gemini/google_accounts.json" ]]; then
+  EXISTING_OAUTH=true
+fi
+
 if [[ -n "${gemini_key:-}" ]]; then
   # ── 방법 A: API 키 ────────────────────────────────────
   export GEMINI_API_KEY="$gemini_key"
@@ -149,20 +161,35 @@ if [[ -n "${gemini_key:-}" ]]; then
   fi
 else
   # ── 방법 B: OAuth ─────────────────────────────────────
-  log_info "Google OAuth 인증을 시작합니다 (브라우저가 열립니다)..."
-  echo ""
-  gemini -p "say: authentication complete" --model gemini-2.0-flash </dev/tty || true
-  echo ""
-  log_ok "OAuth 인증 완료 — 인증 정보가 저장되었습니다"
-  gemini_key=""
+  if [[ "$EXISTING_OAUTH" == true ]]; then
+    log_ok "이미 Gemini CLI OAuth 인증 정보가 발견되었습니다. (기존 인증 사용)"
+    gemini_key=""
+  else
+    log_info "Google OAuth 인증을 시작합니다 (브라우저가 열립니다)..."
+    echo ""
+    # gemini-2.0-flash가 간혹 인증 직후에 동작하지 않는 경우가 있어 1.5-flash로 시도
+    if gemini -p "say: authentication complete" --model gemini-1.5-flash </dev/tty; then
+      echo ""
+      log_ok "OAuth 인증 완료 — 인증 정보가 저장되었습니다"
+    else
+      log_error "OAuth 인증 실패. 브라우저를 열 수 없는 환경이거나 네트워크 문제일 수 있습니다."
+      log_warn "API 키(방법 A)를 직접 입력해 보세요."
+    fi
+    gemini_key=""
+  fi
 fi
 
 # ── Step 5: Claude API 설정 (선택) ───────────────────────
 echo ""
 echo -e "${CYAN}────────────────────────────────────────────────────────${NC}"
-log_info "Step 5/6  Claude API 설정 (선택 — claude.ai 기본 로그인이면 Enter)"
+log_info "Step 5/6  Claude API 설정 (선택 — 개인 계정이면 대부분 Enter)"
 echo -e "${CYAN}────────────────────────────────────────────────────────${NC}"
 echo ""
+
+# 기존 환경변수 감지
+DETECTED_TOKEN="${ANTHROPIC_AUTH_TOKEN:-}"
+DETECTED_URL="${ANTHROPIC_BASE_URL:-}"
+DETECTED_MODEL="${ANTHROPIC_MODEL:-}"
 
 SKIP_CLAUDE_CREDS=false
 if [[ -f "$ENV_FILE" ]]; then
@@ -172,11 +199,28 @@ if [[ -f "$ENV_FILE" ]]; then
 fi
 
 if [[ "$SKIP_CLAUDE_CREDS" == false ]]; then
-  read -rp "  ANTHROPIC_AUTH_TOKEN (없으면 Enter): " auth_token </dev/tty
-  read -rp "  ANTHROPIC_BASE_URL   (없으면 Enter): " base_url   </dev/tty
-  read -rp "  ANTHROPIC_MODEL      (없으면 Enter): " model       </dev/tty
+  echo "  (환경변수가 이미 설정되어 있거나 개인 계정이면 Enter를 누르세요)"
+  echo ""
 
-  mkdir -p "$CLAUDE_DIR"
+  # Auth Token prompt
+  token_prompt="  ANTHROPIC_AUTH_TOKEN"
+  [[ -n "$DETECTED_TOKEN" ]] && token_prompt+=" [기존값 감지됨]"
+  read -rp "$token_prompt (없으면 Enter): " auth_token </dev/tty
+  auth_token="${auth_token:-$DETECTED_TOKEN}"
+
+  # Base URL prompt
+  url_prompt="  ANTHROPIC_BASE_URL"
+  [[ -n "$DETECTED_URL" ]] && url_prompt+=" [기존값 감지됨]"
+  read -rp "$url_prompt (없으면 Enter): " base_url </dev/tty
+  base_url="${base_url:-$DETECTED_URL}"
+
+  # Model prompt
+  model_prompt="  ANTHROPIC_MODEL"
+  [[ -n "$DETECTED_MODEL" ]] && model_prompt+=" [기존값 감지됨: $DETECTED_MODEL]"
+  read -rp "$model_prompt (기본: claude-3-7-sonnet-latest): " model </dev/tty
+  model="${model:-${DETECTED_MODEL:-claude-3-7-sonnet-latest}}"
+
+  mkdir -p "$(dirname "$ENV_FILE")"
   {
     [[ -n "${auth_token:-}" ]] && echo "ANTHROPIC_AUTH_TOKEN=\"$auth_token\""
     [[ -n "${base_url:-}" ]]   && echo "ANTHROPIC_BASE_URL=\"$base_url\""
