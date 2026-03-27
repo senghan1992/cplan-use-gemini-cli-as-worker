@@ -5,9 +5,9 @@ Steps:
 2. Show the plan filename and first 15 lines as a preview.
 3. Run the following Bash command (replace `<PLAN_FILE>` with the actual relative path):
    ```
-   gemini --model gemini-3.1-pro-preview --yolo -p "You are an implementation agent. Read the plan file and execute it step by step. Check off each task as you complete it. If a step fails, log the error and continue to the next step.\n\nPlan file to read and execute: <PLAN_FILE>"
+   gemini --model auto-gemini-2.5 --yolo -p "You are an implementation agent. Read the plan file and execute it step by step. Check off each task as you complete it. If a step fails, log the error and continue to the next step.\n\nPlan file to read and execute: <PLAN_FILE>"
    ```
-4. If the command fails AND the output contains `MODEL_CAPACITY_EXHAUSTED`, `RESOURCE_EXHAUSTED`, or `429`, retry with the next model in this order: `gemini-3-flash-preview` → `gemini-2.5-pro` → `gemini-2.5-flash` → `gemini-2.5-flash-lite`, using the same prompt each time.
+4. If the command fails AND the output contains `MODEL_CAPACITY_EXHAUSTED`, `RESOURCE_EXHAUSTED`, or `429`, retry with the next model in this order: `gemini-2.5-flash` → `gemini-2.5-flash-lite`, using the same prompt each time.
 5. After Gemini finishes (success or failure), output:
    ```
    ✓ Gemini 실행 완료: <PLAN_FILE>

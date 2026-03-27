@@ -74,7 +74,7 @@ GEMINI_MODEL="gemini-2.0-flash"   # 미설정 시 자동 폴백
 ```
 
 Gemini 모델 폴백 순서 (`GEMINI_MODEL` 미설정 시):
-`gemini-2.5-flash-latest` → `gemini-2.0-flash`
+`auto-gemini-2.5` → `gemini-2.5-flash` → `gemini-2.5-flash-lite`
 
 ## Plan 파일 형식
 
