@@ -128,7 +128,7 @@ run_gemini_execute() {
     local attempt_out
     attempt_out=$(mktemp)
 
-    # 에러 출력 억제: 성공 시에만 내용 표시
+    # 백그라운드 실행 — 사용량 초과(즉시 반환)와 정상 실행을 조기 감지
     gemini \
       --model "$model" \
       --yolo \
@@ -138,32 +138,54 @@ Check off each task as you complete it. If a step fails, log the error and conti
 Plan file to read and execute: $plan_file
 
 Start by reading the plan file, then execute each task in order." \
-      > "$attempt_out" 2>&1 || exit_code=$?
+      > "$attempt_out" 2>&1 &
+    local gemini_pid=$!
+
+    # 첫 응답 대기 (최대 5초) — 사용량 초과는 거의 즉시 반환됨
+    local wait_count=0
+    while [[ $wait_count -lt 10 ]] && kill -0 "$gemini_pid" 2>/dev/null; do
+      if is_capacity_error "$attempt_out" || [[ -s "$attempt_out" ]]; then
+        break
+      fi
+      sleep 0.5
+      wait_count=$((wait_count + 1))
+    done
+
+    if is_capacity_error "$attempt_out"; then
+      # 사용량 초과 — 즉시 다음 모델로
+      kill "$gemini_pid" 2>/dev/null
+      wait "$gemini_pid" 2>/dev/null
+      cat "$attempt_out" >> "$log_file"
+      rm -f "$attempt_out"
+      log_warn "⚠ ${model} 사용 불가! (사용량 초과)"
+      if [[ $attempt -lt $total ]]; then
+        continue
+      fi
+      break
+    fi
+
+    # 정상 실행 감지 — 실시간 스트리밍 시작
+    echo ""
+    log_ok "✓ ${model} 진입 성공! 작업 진행중!"
+    echo ""
+    tail -f "$attempt_out" &
+    local tail_pid=$!
+
+    wait "$gemini_pid" 2>/dev/null || exit_code=$?
+    sleep 0.3
+    kill "$tail_pid" 2>/dev/null
+    wait "$tail_pid" 2>/dev/null
 
     cat "$attempt_out" >> "$log_file"
+    rm -f "$attempt_out"
 
     if [[ $exit_code -eq 0 ]]; then
       used_model="$model"
       final_exit_code=0
-      echo ""
-      log_ok "✓ ${model} 진입 성공! 작업 진행중!"
-      echo ""
-      cat "$attempt_out"
-      rm -f "$attempt_out"
       break
     fi
 
-    if is_capacity_error "$attempt_out"; then
-      log_warn "⚠ ${model} 사용 불가! (사용량 초과)"
-      rm -f "$attempt_out"
-      if [[ $attempt -lt $total ]]; then
-        continue
-      fi
-    else
-      rm -f "$attempt_out"
-    fi
-
-    # 용량 오류가 아닌 다른 오류, 또는 마지막 모델 실패 → 루프 종료
+    # 용량 오류가 아닌 다른 오류 → 루프 종료
     break
   done
 
