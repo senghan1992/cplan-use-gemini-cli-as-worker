@@ -255,7 +255,7 @@ main() {
 
   # Phase 1: Claude Code interactive (plan-only)
   log_info "Phase 1: Claude Code (plan-only) 시작..."
-  log_info "Claude에게 원하는 작업을 설명하세요. plan 완성 후 /exit 로 나오세요."
+  log_info "Claude에게 원하는 작업을 설명하세요. plan 완성 후 /execute-gemini 를 입력하세요."
   echo -e "${CYAN}════════════════════════════════════════════════════════${NC}"
   echo ""
 
@@ -276,45 +276,46 @@ main() {
   echo ""
   echo -e "${CYAN}════════════════════════════════════════════════════════${NC}"
 
-  # Snapshot: plan 목록 after → 새 plan 감지
-  local after_plans
-  after_plans=$(ls -1 "$PLAN_DIR"/*.md 2>/dev/null || true)
+  # /execute-gemini 트리거 파일 확인
+  local trigger_file="$LOG_DIR/.cplan-execute"
 
-  local new_plan
-  new_plan=$(comm -13 <(echo "$before_plans" | sort) <(echo "$after_plans" | sort) | head -1)
+  if [[ -f "$trigger_file" ]]; then
+    # /execute-gemini 로 실행 요청됨 → 확인 없이 자동 실행
+    local triggered_plan
+    triggered_plan=$(cat "$trigger_file")
+    rm -f "$trigger_file"
 
-  # fallback: 가장 최근 수정된 plan
-  if [[ -z "$new_plan" ]]; then
-    new_plan=$(find_latest_plan)
-  fi
-
-  if [[ -z "$new_plan" || ! -f "$new_plan" ]]; then
-    log_warn "Plan 파일이 생성되지 않았습니다."
-    log_info "수동으로 plan 작성 후: cplan -g <plan-file>"
-    exit 1
-  fi
-
-  log_ok "Plan 감지: $new_plan"
-  echo ""
-
-  # plan 내용 미리보기
-  echo -e "${BOLD}── Plan 요약 ──${NC}"
-  head -20 "$new_plan"
-  echo -e "${BOLD}───────────────${NC}"
-  echo ""
-
-  # Confirm → Gemini
-  local model_display
-  if [[ -n "${GEMINI_MODEL:-}" ]]; then
-    model_display="$GEMINI_MODEL"
+    if [[ -f "$triggered_plan" ]]; then
+      log_ok "Plan: $triggered_plan"
+      echo ""
+      echo -e "${BOLD}── Plan 요약 ──${NC}"
+      head -20 "$triggered_plan"
+      echo -e "${BOLD}───────────────${NC}"
+      echo ""
+      run_gemini_execute "$triggered_plan"
+    else
+      log_warn "Plan 파일을 찾을 수 없음: $triggered_plan"
+      log_info "수동 실행: cplan -g"
+    fi
   else
-    model_display="${GEMINI_FALLBACK_MODELS[0]} (+fallback)"
-  fi
-  read -rp "$(echo -e "${YELLOW}[cplan]${NC} Gemini (${model_display}) 로 실행할까요? [Y/n] ")" confirm
-  if [[ "${confirm:-Y}" =~ ^[Yy]?$ ]]; then
-    run_gemini_execute "$new_plan"
-  else
-    log_info "나중에 실행: cplan -g $new_plan"
+    # /execute-gemini 없이 종료됨 → 새 plan 감지 후 안내
+    local after_plans
+    after_plans=$(ls -1 "$PLAN_DIR"/*.md 2>/dev/null || true)
+
+    local new_plan
+    new_plan=$(comm -13 <(echo "$before_plans" | sort) <(echo "$after_plans" | sort) | head -1)
+
+    if [[ -z "$new_plan" ]]; then
+      new_plan=$(find_latest_plan)
+    fi
+
+    if [[ -n "$new_plan" && -f "$new_plan" ]]; then
+      log_ok "Plan 생성됨: $new_plan"
+      log_info "Gemini로 실행: cplan -g $new_plan"
+    else
+      log_warn "Plan 파일이 생성되지 않았습니다."
+      log_info "cplan 재실행 후 plan 완성 시 /execute-gemini 를 입력하세요."
+    fi
   fi
 }
 

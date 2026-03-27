@@ -98,7 +98,19 @@ fi
 
 log_ok "plan-only profile → $PROFILE_DIR/CLAUDE.md"
 
-# ── Step 5: API credentials setup ────────────────────────
+# ── Step 5: Install /execute-gemini command ───────────────
+log_info "/execute-gemini 명령어 설치 중..."
+mkdir -p "$HOME/.claude/commands"
+
+if [[ -n "$SCRIPT_DIR" && -f "$SCRIPT_DIR/commands/execute-gemini.md" ]]; then
+  cp "$SCRIPT_DIR/commands/execute-gemini.md" "$HOME/.claude/commands/execute-gemini.md"
+else
+  curl -fsSL "$GITHUB_RAW/commands/execute-gemini.md" -o "$HOME/.claude/commands/execute-gemini.md"
+fi
+
+log_ok "/execute-gemini → $HOME/.claude/commands/execute-gemini.md"
+
+# ── Step 6: API credentials setup ────────────────────────
 echo ""
 echo -e "${CYAN}────────────────────────────────────────${NC}"
 echo -e "${BOLD} API 자격증명 설정${NC}"

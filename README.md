@@ -10,8 +10,11 @@ cplan 실행
 Claude Code (plan-only 모드)
   → 원하는 작업 설명
   → Claude가 docs/superpowers/plans/YYYY-MM-DD-*.md 생성
+  → /execute-gemini 입력
   ↓
-Gemini CLI가 plan 파일을 읽고 단계별 실행
+/exit 로 Claude 종료
+  ↓
+Gemini CLI가 plan 파일을 읽고 단계별 자동 실행
 ```
 
 ## 설치

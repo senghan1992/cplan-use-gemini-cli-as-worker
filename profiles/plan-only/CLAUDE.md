@@ -9,6 +9,9 @@ You are operating in plan-only mode. Follow these rules strictly:
 5. After saving the plan file, output ONLY this message:
    ```
    PLAN_FILE=docs/superpowers/plans/<filename>.md
+
+   /execute-gemini 를 입력하면 Gemini CLI가 자동으로 이 plan을 실행합니다.
+   /exit 로 나가면 나중에 cplan -g 로 실행할 수 있습니다.
    ```
 6. If the request is ambiguous, ask ONE clarifying question before writing the plan. Do not ask multiple questions at once.
 7. Do not summarize what you did. Do not offer alternatives. Only the plan file and the completion message above.
