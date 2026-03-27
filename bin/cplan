@@ -125,6 +125,10 @@ run_gemini_execute() {
     } >> "$log_file"
 
     local exit_code=0
+    local attempt_out
+    attempt_out=$(mktemp)
+
+    # 에러 출력 억제: 성공 시에만 내용 표시
     gemini \
       --model "$model" \
       --yolo \
@@ -134,19 +138,29 @@ Check off each task as you complete it. If a step fails, log the error and conti
 Plan file to read and execute: $plan_file
 
 Start by reading the plan file, then execute each task in order." \
-      2>&1 | tee -a "$log_file" || exit_code=$?
+      > "$attempt_out" 2>&1 || exit_code=$?
+
+    cat "$attempt_out" >> "$log_file"
 
     if [[ $exit_code -eq 0 ]]; then
       used_model="$model"
       final_exit_code=0
+      echo ""
+      log_ok "✓ ${model} 진입 성공! 작업 진행중!"
+      echo ""
+      cat "$attempt_out"
+      rm -f "$attempt_out"
       break
     fi
 
-    if is_capacity_error "$log_file"; then
-      log_warn "⚠ ${model} 용량 부족 → 다음 모델로 전환"
+    if is_capacity_error "$attempt_out"; then
+      log_warn "⚠ ${model} 사용 불가! (사용량 초과)"
+      rm -f "$attempt_out"
       if [[ $attempt -lt $total ]]; then
         continue
       fi
+    else
+      rm -f "$attempt_out"
     fi
 
     # 용량 오류가 아닌 다른 오류, 또는 마지막 모델 실패 → 루프 종료
