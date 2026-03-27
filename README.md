@@ -26,6 +26,7 @@ Gemini CLI가 plan 실행 (진행 상황 실시간 표시)
 
 - [Claude Code CLI](https://claude.ai/code)
 - Node.js + npm (gemini-cli 설치용)
+- Gemini API 키 ([Google AI Studio](https://aistudio.google.com/apikey)에서 무료 발급) 또는 Google 계정
 - bash
 
 ### 한 줄 설치
