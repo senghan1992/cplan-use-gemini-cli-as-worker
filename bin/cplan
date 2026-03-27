@@ -118,10 +118,10 @@ run_gemini_execute() {
 
   for model in "${models[@]}"; do
     attempt=$((attempt + 1))
-    log_info "Attempt ${attempt}/${total}: ${model} 시도 중..."
+    log_info "${model} 시도 중..."
     {
       echo ""
-      echo "[Attempt ${attempt}/${total}] Model: ${model} — $(date '+%Y-%m-%d %H:%M:%S')"
+      echo "[${model}] — $(date '+%Y-%m-%d %H:%M:%S')"
     } >> "$log_file"
 
     local exit_code=0
