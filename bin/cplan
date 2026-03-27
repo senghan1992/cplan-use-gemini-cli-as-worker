@@ -17,12 +17,9 @@ ENV_FILE="$HOME/.claude/env"
 PROFILE_DIR="$HOME/.claude/profiles/plan-only"
 # GEMINI_MODEL: 설정 시 GEMINI_FALLBACK_MODELS 무시하고 해당 모델만 단일 시도
 GEMINI_FALLBACK_MODELS=(
-  "auto-gemini-3"
-  "gemini-3.1-pro"
-  "gemini-3-flash"
-  "auto-gemini-2.5"
-  "gemini-2.5-flash-latest"
   "gemini-2.0-flash"
+  "gemini-2.0-flash-lite"
+  "gemini-1.5-flash"
 )
 
 # ── Colors ──────────────────────────────────────────────
