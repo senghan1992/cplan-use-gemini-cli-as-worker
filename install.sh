@@ -2,7 +2,7 @@
 #
 # cplan install script
 # Usage: bash install.sh
-#        curl -fsSL https://raw.githubusercontent.com/YOUR_GITHUB_USER/cplan/main/install.sh | bash
+#        curl -fsSL https://raw.githubusercontent.com/senghan1992/cplan-use-gemini-cli-as-worker/main/install.sh | bash
 #
 
 set -euo pipefail
@@ -21,11 +21,15 @@ log_ok()    { echo -e "${GREEN}[install]${NC} $*"; }
 log_warn()  { echo -e "${YELLOW}[install]${NC} $*"; }
 log_error() { echo -e "${RED}[install]${NC} $*"; }
 
-# ── Detect script location (local install vs pipe) ──────
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-install.sh}")" 2>/dev/null && pwd || echo "")"
+# ── Detect script location (local clone vs curl|bash) ───
+# curl|bash 실행 시: BASH_SOURCE[0]는 빈 문자열이거나 실제 파일이 아님
+# bash install.sh 실행 시: BASH_SOURCE[0]는 실제 파일 경로
+SCRIPT_DIR=""
+if [[ -f "${BASH_SOURCE[0]:-}" ]]; then
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+fi
 
-# pipe 방식 (curl | bash)이면 GitHub에서 직접 파일 다운로드
-GITHUB_RAW="https://raw.githubusercontent.com/YOUR_GITHUB_USER/cplan/main"
+GITHUB_RAW="https://raw.githubusercontent.com/senghan1992/cplan-use-gemini-cli-as-worker/main"
 
 # ── Paths ────────────────────────────────────────────────
 BIN_DIR="$HOME/.local/bin"
@@ -36,7 +40,7 @@ ENV_FILE="$CLAUDE_DIR/env"
 # ── Step 1: Prerequisites check ──────────────────────────
 echo ""
 echo -e "${BOLD}╔════════════════════════════════════════╗${NC}"
-echo -e "${BOLD}║        cplan installer v1.0            ║${NC}"
+echo -e "${BOLD}║        cplan installer v1.1            ║${NC}"
 echo -e "${BOLD}╚════════════════════════════════════════╝${NC}"
 echo ""
 
@@ -76,10 +80,8 @@ log_info "cplan 스크립트 설치 중..."
 mkdir -p "$BIN_DIR"
 
 if [[ -n "$SCRIPT_DIR" && -f "$SCRIPT_DIR/bin/cplan" ]]; then
-  # 로컬 repo에서 설치
   cp "$SCRIPT_DIR/bin/cplan" "$BIN_DIR/cplan"
 else
-  # GitHub에서 직접 다운로드
   curl -fsSL "$GITHUB_RAW/bin/cplan" -o "$BIN_DIR/cplan"
 fi
 
@@ -117,31 +119,28 @@ echo -e "${BOLD} API 자격증명 설정${NC}"
 echo -e "${CYAN}────────────────────────────────────────${NC}"
 echo ""
 
+SKIP_CREDS=false
 if [[ -f "$ENV_FILE" ]]; then
   log_warn "$ENV_FILE 이 이미 존재합니다."
-  read -rp "덮어쓸까요? [y/N] " overwrite
+  read -rp "덮어쓸까요? [y/N] " overwrite </dev/tty
   if [[ ! "${overwrite:-N}" =~ ^[Yy]$ ]]; then
     log_info "자격증명 설정을 건너뜁니다."
     SKIP_CREDS=true
-  else
-    SKIP_CREDS=false
   fi
-else
-  SKIP_CREDS=false
 fi
 
-if [[ "${SKIP_CREDS:-false}" == false ]]; then
+if [[ "$SKIP_CREDS" == false ]]; then
   echo ""
   echo "Claude API 설정 (claude.ai 기본 로그인 사용 시 Enter로 건너뛰기):"
   echo ""
 
-  read -rp "  ANTHROPIC_AUTH_TOKEN (API 키, 없으면 Enter): " auth_token
-  read -rp "  ANTHROPIC_BASE_URL   (커스텀 URL, 없으면 Enter): " base_url
-  read -rp "  ANTHROPIC_MODEL      (모델명, 없으면 Enter): " model
+  read -rp "  ANTHROPIC_AUTH_TOKEN (API 키, 없으면 Enter): " auth_token </dev/tty
+  read -rp "  ANTHROPIC_BASE_URL   (커스텀 URL, 없으면 Enter): " base_url </dev/tty
+  read -rp "  ANTHROPIC_MODEL      (모델명, 없으면 Enter): " model </dev/tty
 
   echo ""
   echo "Gemini API 설정:"
-  read -rp "  GEMINI_API_KEY (Google AI Studio 키): " gemini_key
+  read -rp "  GEMINI_API_KEY (Google AI Studio 키, 없으면 Enter): " gemini_key </dev/tty
 
   mkdir -p "$CLAUDE_DIR"
   {
@@ -154,7 +153,7 @@ if [[ "${SKIP_CREDS:-false}" == false ]]; then
   log_ok "자격증명 저장: $ENV_FILE"
 fi
 
-# ── Step 6: PATH setup ───────────────────────────────────
+# ── Step 7: PATH setup ───────────────────────────────────
 echo ""
 log_info "PATH 설정 확인 중..."
 
@@ -188,8 +187,8 @@ echo -e "${GREEN}${BOLD} 설치 완료!${NC}"
 echo -e "${CYAN}════════════════════════════════════════${NC}"
 echo ""
 echo "  사용법:"
-echo "    cplan         - Claude로 plan 작성 → Gemini로 자동 실행"
-echo "    cplan -g      - 최근 plan을 Gemini로만 실행"
+echo "    cplan         - Claude로 plan 작성 → /execute-gemini 로 실행"
+echo "    cplan -g      - 최근 plan을 Gemini로 직접 실행"
 echo "    cplan -l      - plan 목록 확인"
 echo ""
 

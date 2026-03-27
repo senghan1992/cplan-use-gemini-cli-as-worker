@@ -31,13 +31,13 @@ Gemini CLI가 plan 실행 (진행 상황 실시간 표시)
 ### 한 줄 설치
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/YOUR_GITHUB_USER/cplan/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/senghan1992/cplan-use-gemini-cli-as-worker/main/install.sh | bash
 ```
 
 ### 또는 직접 클론 후 설치
 
 ```bash
-git clone https://github.com/YOUR_GITHUB_USER/cplan.git
+git clone https://github.com/senghan1992/cplan-use-gemini-cli-as-worker.git cplan
 cd cplan
 bash install.sh
 ```

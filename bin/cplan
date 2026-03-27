@@ -64,7 +64,7 @@ EOF
 load_env() {
   if [[ -f "$ENV_FILE" ]]; then
     source "$ENV_FILE"
-    export ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL ANTHROPIC_MODEL 2>/dev/null || true
+    export ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL ANTHROPIC_MODEL GEMINI_API_KEY 2>/dev/null || true
   fi
 }
 
