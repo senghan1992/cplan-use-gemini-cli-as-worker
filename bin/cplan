@@ -2,17 +2,26 @@
 #
 # cplan - Claude Plan + Gemini Execute
 #
-# Usage:
-#   cplan          → Claude Code (plan-only) 열림 → plan 작성 → Gemini 자동 실행
-#   cplan -g       → 최근 plan을 Gemini로 실행만
-#   cplan -l       → plan 목록 + 상태
+# Claude (Sonnet) creates implementation plans,
+# Gemini CLI automatically executes them.
 #
+# Usage:
+#   cplan              → Open Claude Code (plan-only) → write plan → Gemini auto-execute
+#   cplan -g           → Execute latest plan with Gemini only
+#   cplan -g <file>    → Execute specific plan with Gemini
+#   cplan -l           → List plans and their status
+#   cplan -i / --init  → Initialize current directory as a cplan project
+#   cplan -d / --doctor→ Run self-diagnostics
+#   cplan -v / --version → Show version
+#
+
+CPLAN_VERSION="1.3.0"
 
 set -euo pipefail
 
 # ── Config ──────────────────────────────────────────────
-PLAN_DIR="docs/superpowers/plans"
-LOG_DIR="docs/superpowers/logs"
+DEFAULT_PLAN_DIR="docs/superpowers/plans"
+DEFAULT_LOG_DIR="docs/superpowers/logs"
 ENV_FILE="$HOME/.claude/env"
 PROFILE_DIR="$HOME/.claude/profiles/plan-only"
 # GEMINI_MODEL: 설정 시 GEMINI_FALLBACK_MODELS 무시하고 해당 모델만 단일 시도
@@ -28,7 +37,9 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 CYAN='\033[0;36m'
+MAGENTA='\033[0;35m'
 BOLD='\033[1m'
+DIM='\033[2m'
 NC='\033[0m'
 
 # ── Functions ───────────────────────────────────────────
@@ -37,29 +48,91 @@ log_ok()    { echo -e "${GREEN}[cplan]${NC} $*"; }
 log_warn()  { echo -e "${YELLOW}[cplan]${NC} $*"; }
 log_error() { echo -e "${RED}[cplan]${NC} $*"; }
 
+# ── Project root detection ─────────────────────────────
+# Walks up from current directory looking for .cplan config
+find_project_root() {
+  local dir="$PWD"
+  while [[ "$dir" != "/" ]]; do
+    if [[ -f "$dir/.cplan" ]]; then
+      echo "$dir"
+      return 0
+    fi
+    dir="$(dirname "$dir")"
+  done
+  return 1
+}
+
+# Load project-level config from .cplan file
+load_project_config() {
+  PLAN_DIR="$DEFAULT_PLAN_DIR"
+  LOG_DIR="$DEFAULT_LOG_DIR"
+
+  local project_root
+  if project_root=$(find_project_root 2>/dev/null); then
+    CPLAN_PROJECT_ROOT="$project_root"
+    if [[ -f "$project_root/.cplan" ]]; then
+      # Source the config file (simple KEY=VALUE format)
+      while IFS='=' read -r key value; do
+        key=$(echo "$key" | xargs)  # trim whitespace
+        value=$(echo "$value" | xargs | sed 's/^"//;s/"$//')  # trim quotes
+        [[ -z "$key" || "$key" =~ ^# ]] && continue
+        case "$key" in
+          plan_dir) PLAN_DIR="$value" ;;
+          log_dir)  LOG_DIR="$value" ;;
+          gemini_model) export GEMINI_MODEL="$value" ;;
+        esac
+      done < "$project_root/.cplan"
+    fi
+  else
+    CPLAN_PROJECT_ROOT="$PWD"
+  fi
+}
+
 usage() {
-  cat <<'EOF'
-Usage: cplan [options]
+  cat <<EOF
+${BOLD}cplan${NC} v${CPLAN_VERSION} — Claude Plan + Gemini Execute
 
-  cplan              Open Claude Code (plan-only) → auto-execute with Gemini
-  cplan -g           Execute latest plan with Gemini only
-  cplan -g <file>    Execute specific plan with Gemini
-  cplan -l           List plans and their status
-  cplan -h           Show this help
+${BOLD}USAGE${NC}
+  cplan                 Open Claude Code (plan-only) → auto-execute with Gemini
+  cplan -g              Execute latest plan with Gemini
+  cplan -g <file>       Execute specific plan with Gemini
+  cplan -l              List plans and their status
+  cplan -i, --init      Initialize current directory as a cplan project
+  cplan -d, --doctor    Run self-diagnostics and check environment
+  cplan -v, --version   Show version
+  cplan -h, --help      Show this help
 
-Flow:
-  1. cplan 실행 → Claude Code 열림 (plan-only 모드)
-  2. Claude에게 원하는 작업을 설명
-  3. Claude가 plan 파일 생성 후 세션 종료
-  4. 자동으로 Gemini CLI가 plan 실행
+${BOLD}FLOW${NC}
+  1. cplan runs → Claude Code opens (plan-only mode)
+  2. Describe the work you want done to Claude (Sonnet)
+  3. Claude writes a plan file → session stays open
+  4. Type /execute-gemini → Gemini CLI executes the plan
+  5. Continue with the next task or /exit
 
-Environment:
-  GEMINI_MODEL    특정 모델 고정 시 설정 (기본: auto-gemini-2.5 → gemini-2.5-flash-latest → gemini-2.0-flash 순 폴백)
+${BOLD}QUICK START${NC}
+  ${DIM}# Initialize a project${NC}
+  cd my-project
+  cplan --init
+
+  ${DIM}# Start planning${NC}
+  cplan
+
+${BOLD}ENVIRONMENT${NC}
+  GEMINI_MODEL    Lock to a specific model (default: auto fallback)
+  GEMINI_API_KEY  Gemini API key (set during install or in ~/.claude/env)
+
+${BOLD}PROJECT CONFIG${NC}
+  Create a .cplan file in your project root:
+    plan_dir = docs/plans
+    log_dir  = docs/logs
+    gemini_model = gemini-2.5-flash
+
 EOF
 }
 
 load_env() {
   if [[ -f "$ENV_FILE" ]]; then
+    # shellcheck source=/dev/null
     source "$ENV_FILE"
     export ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL ANTHROPIC_MODEL GEMINI_API_KEY 2>/dev/null || true
   fi
@@ -71,6 +144,210 @@ ensure_dirs() {
 
 find_latest_plan() {
   ls -t "$PLAN_DIR"/*.md 2>/dev/null | head -1
+}
+
+# ── Version ─────────────────────────────────────────────
+show_version() {
+  echo "cplan v${CPLAN_VERSION}"
+}
+
+# ── Doctor (self-diagnostics) ───────────────────────────
+run_doctor() {
+  echo ""
+  echo -e "${BOLD}╔════════════════════════════════════════╗${NC}"
+  echo -e "${BOLD}║   cplan doctor — self-diagnostics      ║${NC}"
+  echo -e "${BOLD}╚════════════════════════════════════════╝${NC}"
+  echo ""
+
+  local issues=0
+
+  # 1. Claude CLI
+  echo -e "${BOLD}  Checking prerequisites...${NC}"
+  echo ""
+  if command -v claude &>/dev/null; then
+    local claude_ver
+    claude_ver=$(claude --version 2>/dev/null | head -1 || echo "unknown")
+    echo -e "  ${GREEN}✓${NC} Claude CLI:     ${claude_ver}"
+  else
+    echo -e "  ${RED}✗${NC} Claude CLI:     not found"
+    echo -e "    ${DIM}Install: https://claude.ai/code${NC}"
+    issues=$((issues + 1))
+  fi
+
+  # 2. Node.js / npm
+  if command -v node &>/dev/null; then
+    echo -e "  ${GREEN}✓${NC} Node.js:        $(node --version 2>/dev/null)"
+  else
+    echo -e "  ${RED}✗${NC} Node.js:        not found"
+    echo -e "    ${DIM}Install: https://nodejs.org${NC}"
+    issues=$((issues + 1))
+  fi
+
+  if command -v npm &>/dev/null; then
+    echo -e "  ${GREEN}✓${NC} npm:            $(npm --version 2>/dev/null)"
+  else
+    echo -e "  ${YELLOW}⚠${NC} npm:            not found (needed for gemini-cli)"
+    issues=$((issues + 1))
+  fi
+
+  # 3. Gemini CLI
+  if command -v gemini &>/dev/null; then
+    local gemini_ver
+    gemini_ver=$(gemini --version 2>/dev/null | head -1 || echo "unknown")
+    echo -e "  ${GREEN}✓${NC} Gemini CLI:     ${gemini_ver}"
+  else
+    echo -e "  ${RED}✗${NC} Gemini CLI:     not found"
+    echo -e "    ${DIM}Install: npm install -g @google/gemini-cli${NC}"
+    issues=$((issues + 1))
+  fi
+
+  # 4. Gemini authentication
+  echo ""
+  echo -e "${BOLD}  Checking authentication...${NC}"
+  echo ""
+
+  if [[ -n "${GEMINI_API_KEY:-}" ]]; then
+    echo -e "  ${GREEN}✓${NC} GEMINI_API_KEY: set (${GEMINI_API_KEY:0:8}...)"
+  elif [[ -f "$HOME/.gemini/oauth_creds.json" ]] || [[ -f "$HOME/.gemini/google_accounts.json" ]]; then
+    echo -e "  ${GREEN}✓${NC} Gemini OAuth:   configured"
+  else
+    echo -e "  ${YELLOW}⚠${NC} Gemini auth:    not configured"
+    echo -e "    ${DIM}Run install.sh or set GEMINI_API_KEY${NC}"
+    issues=$((issues + 1))
+  fi
+
+  # Claude API (optional)
+  if [[ -n "${ANTHROPIC_AUTH_TOKEN:-}" ]]; then
+    echo -e "  ${GREEN}✓${NC} Claude API:     token set"
+  elif [[ -n "${ANTHROPIC_BASE_URL:-}" ]]; then
+    echo -e "  ${GREEN}✓${NC} Claude API:     custom endpoint (${ANTHROPIC_BASE_URL})"
+  else
+    echo -e "  ${DIM}ℹ${NC} Claude API:     using default login (no custom token)"
+  fi
+
+  # 5. Files and profile
+  echo ""
+  echo -e "${BOLD}  Checking installed files...${NC}"
+  echo ""
+
+  if [[ -f "$PROFILE_DIR/CLAUDE.md" ]]; then
+    echo -e "  ${GREEN}✓${NC} Plan profile:   $PROFILE_DIR/CLAUDE.md"
+  else
+    echo -e "  ${RED}✗${NC} Plan profile:   not found at $PROFILE_DIR/CLAUDE.md"
+    echo -e "    ${DIM}Run install.sh to fix${NC}"
+    issues=$((issues + 1))
+  fi
+
+  if [[ -f "$HOME/.claude/commands/execute-gemini.md" ]]; then
+    echo -e "  ${GREEN}✓${NC} Slash command:  /execute-gemini"
+  else
+    echo -e "  ${RED}✗${NC} Slash command:  /execute-gemini not found"
+    echo -e "    ${DIM}Run install.sh to fix${NC}"
+    issues=$((issues + 1))
+  fi
+
+  # 6. Project config
+  echo ""
+  echo -e "${BOLD}  Checking project config...${NC}"
+  echo ""
+
+  local project_root
+  if project_root=$(find_project_root 2>/dev/null); then
+    echo -e "  ${GREEN}✓${NC} Project root:   $project_root"
+    echo -e "  ${DIM}ℹ${NC} Plan dir:       $PLAN_DIR"
+    echo -e "  ${DIM}ℹ${NC} Log dir:        $LOG_DIR"
+  else
+    echo -e "  ${DIM}ℹ${NC} Project root:   not initialized (run: cplan --init)"
+  fi
+
+  # 7. PATH check
+  if echo "$PATH" | tr ':' '\n' | grep -q "$HOME/.local/bin"; then
+    echo -e "  ${GREEN}✓${NC} PATH:           ~/.local/bin included"
+  else
+    echo -e "  ${YELLOW}⚠${NC} PATH:           ~/.local/bin not in PATH"
+    issues=$((issues + 1))
+  fi
+
+  # Summary
+  echo ""
+  echo -e "${CYAN}────────────────────────────────────────${NC}"
+  if [[ $issues -eq 0 ]]; then
+    echo -e "  ${GREEN}${BOLD}All checks passed! Ready to use.${NC}"
+  else
+    echo -e "  ${YELLOW}${BOLD}${issues} issue(s) found.${NC} Fix the items above."
+  fi
+  echo ""
+}
+
+# ── Init (project initialization) ──────────────────────
+run_init() {
+  echo ""
+  echo -e "${BOLD}╔════════════════════════════════════════╗${NC}"
+  echo -e "${BOLD}║   cplan init — project setup           ║${NC}"
+  echo -e "${BOLD}╚════════════════════════════════════════╝${NC}"
+  echo ""
+
+  local target_dir="${1:-$PWD}"
+
+  if [[ -f "$target_dir/.cplan" ]]; then
+    log_warn "This directory is already initialized as a cplan project."
+    log_info "Config: $target_dir/.cplan"
+    cat "$target_dir/.cplan"
+    echo ""
+    read -rp "Re-initialize? [y/N] " reinit </dev/tty
+    if [[ ! "${reinit:-N}" =~ ^[Yy]$ ]]; then
+      echo "Cancelled."
+      return 0
+    fi
+  fi
+
+  # Ask for plan directory
+  echo -e "  ${BOLD}Plan directory${NC} (where Claude saves plans)"
+  read -rp "  [docs/superpowers/plans]: " user_plan_dir </dev/tty
+  user_plan_dir="${user_plan_dir:-docs/superpowers/plans}"
+
+  # Ask for log directory
+  echo -e "  ${BOLD}Log directory${NC} (Gemini execution logs)"
+  read -rp "  [docs/superpowers/logs]: " user_log_dir </dev/tty
+  user_log_dir="${user_log_dir:-docs/superpowers/logs}"
+
+  # Create config
+  cat > "$target_dir/.cplan" <<EOF
+# cplan project configuration
+# https://github.com/senghan1992/cplan-use-gemini-cli-as-worker
+
+plan_dir = ${user_plan_dir}
+log_dir  = ${user_log_dir}
+# gemini_model = auto-gemini-2.5
+EOF
+
+  # Create directories
+  mkdir -p "$target_dir/$user_plan_dir" "$target_dir/$user_log_dir"
+
+  # Suggest .gitignore additions
+  local gitignore="$target_dir/.gitignore"
+  local additions=""
+  if [[ -f "$gitignore" ]]; then
+    if ! grep -q "${user_log_dir}" "$gitignore" 2>/dev/null; then
+      additions+="${user_log_dir}/
+"
+    fi
+  fi
+
+  echo ""
+  log_ok "Initialized cplan project:"
+  log_ok "  Config:    $target_dir/.cplan"
+  log_ok "  Plans:     $target_dir/$user_plan_dir/"
+  log_ok "  Logs:      $target_dir/$user_log_dir/"
+  echo ""
+
+  if [[ -n "$additions" ]]; then
+    log_warn "Consider adding to .gitignore:"
+    echo -e "  ${DIM}${additions}${NC}"
+  fi
+
+  log_info "Run ${BOLD}cplan${NC} to start planning!"
+  echo ""
 }
 
 # ── Capacity error detection ─────────────────────────
@@ -89,7 +366,7 @@ run_gemini_execute() {
   local done_file="$LOG_DIR/${base}.done"
 
   if [[ ! -f "$plan_file" ]]; then
-    log_error "Plan 파일이 존재하지 않음: $plan_file"
+    log_error "Plan file not found: $plan_file"
     return 1
   fi
 
@@ -110,7 +387,7 @@ run_gemini_execute() {
   : > "$log_file"
 
   echo ""
-  log_info "Phase 2: Gemini CLI 실행"
+  log_info "Phase 2: Gemini CLI execution"
   log_info "  Plan: $plan_file"
   log_info "  Log:  $log_file"
   echo -e "${CYAN}════════════════════════════════════════════════════════${NC}"
@@ -118,7 +395,7 @@ run_gemini_execute() {
 
   for model in "${models[@]}"; do
     attempt=$((attempt + 1))
-    log_info "${model} 시도 중..."
+    log_info "Trying ${model}..."
     {
       echo ""
       echo "[${model}] — $(date '+%Y-%m-%d %H:%M:%S')"
@@ -197,7 +474,7 @@ Start by reading the plan file to count total tasks, then execute each task in o
       cat "$attempt_out" >> "$log_file"
       cat "$attempt_err" >> "$log_file"
       rm -f "$attempt_out" "$attempt_err"
-      log_warn "⚠ ${model} 사용 불가 (용량 초과) → 다음 모델 시도"
+      log_warn "⚠ ${model} capacity exhausted → trying next model"
       if [[ $attempt -lt $total ]]; then
         continue
       fi
@@ -206,7 +483,7 @@ Start by reading the plan file to count total tasks, then execute each task in o
 
     # 정상 실행 감지 — 실시간 스트리밍 시작
     echo ""
-    log_ok "✓ ${model} 진입 성공! 작업 진행중!"
+    log_ok "✓ ${model} connected! Working..."
     echo ""
     tail -f "$attempt_out" &
     local tail_pid=$!
@@ -231,7 +508,7 @@ Start by reading the plan file to count total tasks, then execute each task in o
     if is_capacity_error "$attempt_err" || is_capacity_error "$attempt_out"; then
       rm -f "$attempt_out" "$attempt_err"
       echo ""
-      log_warn "⚠ ${model} 작업 중 용량 초과! 다음 모델로 전환..."
+      log_warn "⚠ ${model} capacity exhausted during work! Switching model..."
       if [[ $attempt -lt $total ]]; then
         continue
       fi
@@ -253,7 +530,7 @@ Start by reading the plan file to count total tasks, then execute each task in o
     } >> "$log_file"
     touch "$done_file"
     echo ""
-    log_ok "✓ 완료! (Model: ${used_model})"
+    log_ok "✓ Complete! (Model: ${used_model})"
     log_ok "  Plan: $plan_file"
     log_ok "  Log:  $log_file"
   else
@@ -261,8 +538,8 @@ Start by reading the plan file to count total tasks, then execute each task in o
       echo ""
       echo "[Failed] — $(date '+%Y-%m-%d %H:%M:%S')"
     } >> "$log_file"
-    log_error "✗ 모든 모델 실패"
-    log_info "로그 확인: cat $log_file"
+    log_error "✗ All models failed"
+    log_info "Check log: cat $log_file"
   fi
 
   return $final_exit_code
@@ -303,8 +580,24 @@ list_plans() {
 
 # ── Main ────────────────────────────────────────────────
 main() {
+  # Load project config first (before parsing args)
+  load_project_config
+
   # Parse arguments
   case "${1:-}" in
+    -v|--version)
+      show_version
+      exit 0
+      ;;
+    -d|--doctor)
+      load_env
+      run_doctor
+      exit 0
+      ;;
+    -i|--init)
+      run_init "${2:-}"
+      exit 0
+      ;;
     -g|--gemini-only)
       load_env
       ensure_dirs
@@ -313,7 +606,7 @@ main() {
         target=$(find_latest_plan)
       fi
       if [[ -z "$target" || ! -f "$target" ]]; then
-        log_error "Plan 파일 없음: ${target:-$PLAN_DIR/}"
+        log_error "No plan file found: ${target:-$PLAN_DIR/}"
         exit 1
       fi
       log_info "Plan: $target"
@@ -341,13 +634,14 @@ main() {
   before_plans=$(ls -1 "$PLAN_DIR"/*.md 2>/dev/null || true)
 
   # Phase 1: Claude Code interactive (plan-only)
-  log_info "Phase 1: Claude Code (plan-only) 시작..."
-  log_info "Claude에게 원하는 작업을 설명하세요. plan 완성 후 /execute-gemini 를 입력하세요."
+  log_info "Phase 1: Claude Code (plan-only) starting..."
+  log_info "Describe the work you want done. Type /execute-gemini when the plan is ready."
   echo -e "${CYAN}════════════════════════════════════════════════════════${NC}"
   echo ""
 
   if [[ ! -f "$PROFILE_DIR/CLAUDE.md" ]]; then
-    log_error "plan-only 프로필 없음: $PROFILE_DIR/CLAUDE.md"
+    log_error "Plan-only profile not found: $PROFILE_DIR/CLAUDE.md"
+    log_error "Run: cplan --doctor  or reinstall with install.sh"
     exit 1
   fi
 
@@ -372,8 +666,8 @@ main() {
   new_plan=$(comm -13 <(echo "$before_plans" | sort) <(echo "$after_plans" | sort) | head -1)
 
   if [[ -n "$new_plan" && -f "$new_plan" ]]; then
-    log_info "미실행 Plan 감지: $new_plan"
-    log_info "Gemini로 실행하려면: cplan -g $new_plan"
+    log_info "Unexecuted plan detected: $new_plan"
+    log_info "To execute with Gemini: cplan -g $new_plan"
   fi
 }
 
