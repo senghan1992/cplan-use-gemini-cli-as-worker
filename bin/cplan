@@ -125,39 +125,79 @@ run_gemini_execute() {
     } >> "$log_file"
 
     local exit_code=0
-    local attempt_out
+    local attempt_out attempt_err
     attempt_out=$(mktemp)
+    attempt_err=$(mktemp)
 
-    # 백그라운드 실행 — 사용량 초과(즉시 반환)와 정상 실행을 조기 감지
+    # 백그라운드 실행 — stdout/stderr 분리 (stderr는 로그 파일로만, 터미널에 출력 안 함)
     gemini \
       --model "$model" \
       --yolo \
-      -p "You are an implementation agent. Read the plan file and execute it step by step.
-Check off each task as you complete it. If a step fails, log the error and continue to the next step.
+      -p "You are an implementation agent. Read the plan file and execute ALL tasks.
+
+CRITICAL — Progress Logging Rules:
+1. Before starting each Task, print EXACTLY this format (blank lines included):
+
+###########################################
+#  [Task N/TOTAL] Task title
+###########################################
+
+2. Before each Step, print:
+   ▶ [Step N.X] Step description
+3. After each Step completes, print:
+   ✓ [Step N.X] Done  (on success)
+   ✗ [Step N.X] FAIL: <one-line reason>  (on failure)
+4. After each Task completes, print:
+
+   ✅ [Task N] COMPLETE
+###########################################
+
+5. After ALL Tasks are done, print:
+
+###########################################
+#  SUMMARY
+###########################################
+✓ Task 1: title
+✗ Task 2: title (reason)
+Result: X/Y tasks succeeded
+###########################################
+
+FORBIDDEN Tools:
+- NEVER use Playwright, browser, or any MCP browser tools. This is a CLI-only environment.
+- NEVER attempt to launch a browser for verification. Use curl, wget, or CLI commands instead.
+- For visual verification steps (screenshots, UI checks), SKIP them with the marker below.
+
+Other Rules:
+- If a step requires a browser, GUI, or visual verification that cannot be done in CLI, print:
+   ⊘ [Step N.X] SKIP: requires visual/browser verification
+  Then move to the next step. Do NOT mark the entire task as cancelled.
+- If a step fails, log the error and continue to the next step.
+- Do NOT suppress or omit progress markers. Every task and step MUST have its marker printed.
 
 Plan file to read and execute: $plan_file
 
-Start by reading the plan file, then execute each task in order." \
-      > "$attempt_out" 2>&1 &
+Start by reading the plan file to count total tasks, then execute each task in order with progress markers." \
+      > "$attempt_out" 2> "$attempt_err" &
     local gemini_pid=$!
 
-    # 첫 응답 대기 (최대 5초) — 사용량 초과는 거의 즉시 반환됨
+    # 첫 응답 대기 (최대 5초) — 사용량 초과는 stderr에 거의 즉시 반환됨
     local wait_count=0
     while [[ $wait_count -lt 10 ]] && kill -0 "$gemini_pid" 2>/dev/null; do
-      if is_capacity_error "$attempt_out" || [[ -s "$attempt_out" ]]; then
+      if is_capacity_error "$attempt_err" || is_capacity_error "$attempt_out" || [[ -s "$attempt_out" ]]; then
         break
       fi
       sleep 0.5
       wait_count=$((wait_count + 1))
     done
 
-    if is_capacity_error "$attempt_out"; then
-      # 사용량 초과 — 즉시 다음 모델로
+    if is_capacity_error "$attempt_err" || is_capacity_error "$attempt_out"; then
+      # 사용량 초과 — 즉시 다음 모델로 (상세 에러는 로그에만 기록)
       kill "$gemini_pid" 2>/dev/null
       wait "$gemini_pid" 2>/dev/null
       cat "$attempt_out" >> "$log_file"
-      rm -f "$attempt_out"
-      log_warn "⚠ ${model} 사용 불가! (사용량 초과)"
+      cat "$attempt_err" >> "$log_file"
+      rm -f "$attempt_out" "$attempt_err"
+      log_warn "⚠ ${model} 사용 불가 (용량 초과) → 다음 모델 시도"
       if [[ $attempt -lt $total ]]; then
         continue
       fi
@@ -177,15 +217,29 @@ Start by reading the plan file, then execute each task in order." \
     wait "$tail_pid" 2>/dev/null
 
     cat "$attempt_out" >> "$log_file"
-    rm -f "$attempt_out"
+    # stderr는 로그에만 기록 (터미널 출력 없음)
+    cat "$attempt_err" >> "$log_file"
 
     if [[ $exit_code -eq 0 ]]; then
+      rm -f "$attempt_out" "$attempt_err"
       used_model="$model"
       final_exit_code=0
       break
     fi
 
+    # 실행 중 사용량 초과 — 에러 숨기고 다음 모델로 폴백
+    if is_capacity_error "$attempt_err" || is_capacity_error "$attempt_out"; then
+      rm -f "$attempt_out" "$attempt_err"
+      echo ""
+      log_warn "⚠ ${model} 작업 중 용량 초과! 다음 모델로 전환..."
+      if [[ $attempt -lt $total ]]; then
+        continue
+      fi
+      break
+    fi
+
     # 용량 오류가 아닌 다른 오류 → 루프 종료
+    rm -f "$attempt_out" "$attempt_err"
     break
   done
 
@@ -302,7 +356,8 @@ main() {
 
   # 직접 실행 (서브쉘 아님) — stdin/stdout 그대로 터미널에 연결
   command claude \
-    --tools "Read,Glob,Grep,Write,Bash(gemini *)" \
+    --tools "Read,Glob,Grep,Write,Bash(gemini *,cplan *,nohup *)" \
+    --disallowedTools "Edit" \
     --append-system-prompt "$system_prompt" \
     || true
 
