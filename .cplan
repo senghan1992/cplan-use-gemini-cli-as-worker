@@ -1,0 +1,6 @@
+# cplan project configuration
+# https://github.com/senghan1992/cplan-use-gemini-cli-as-worker
+
+plan_dir = docs/superpowers/plans
+log_dir  = docs/superpowers/logs
+# gemini_model = auto-gemini-2.5

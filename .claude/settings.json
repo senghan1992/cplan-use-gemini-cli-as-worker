@@ -2,5 +2,18 @@
   "permissions": {
     "allow": [],
     "deny": []
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c 'if [[ \"$TOOL_INPUT\" == *docs/superpowers/plans/*.md* ]]; then echo \"PLAN_CREATED: auto-triggering gemini execution\"; nohup cplan -g > /tmp/cplan-auto-exec.log 2>&1 & echo \"PID=$!\"; fi'"
+          }
+        ]
+      }
+    ]
   }
 }
