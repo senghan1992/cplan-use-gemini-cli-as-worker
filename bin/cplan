@@ -23,12 +23,13 @@ set -euo pipefail
 DEFAULT_PLAN_DIR="docs/superpowers/plans"
 DEFAULT_LOG_DIR="docs/superpowers/logs"
 ENV_FILE="$HOME/.claude/env"
-PROFILE_DIR="$HOME/.claude/profiles/plan-only"
+PROFILE_DIR="$HOME/.claude/profiles/gemini-worker"
 # GEMINI_MODEL: 설정 시 GEMINI_FALLBACK_MODELS 무시하고 해당 모델만 단일 시도
 GEMINI_FALLBACK_MODELS=(
   "auto-gemini-2.5"
   "gemini-2.5-flash"
   "gemini-2.5-flash-lite"
+  "gemini-2.0-flash"
 )
 
 # ── Colors ──────────────────────────────────────────────
@@ -231,20 +232,13 @@ run_doctor() {
   echo ""
 
   if [[ -f "$PROFILE_DIR/CLAUDE.md" ]]; then
-    echo -e "  ${GREEN}✓${NC} Plan profile:   $PROFILE_DIR/CLAUDE.md"
+    echo -e "  ${GREEN}✓${NC} Worker profile: $PROFILE_DIR/CLAUDE.md"
   else
-    echo -e "  ${RED}✗${NC} Plan profile:   not found at $PROFILE_DIR/CLAUDE.md"
+    echo -e "  ${RED}✗${NC} Worker profile: not found at $PROFILE_DIR/CLAUDE.md"
     echo -e "    ${DIM}Run install.sh to fix${NC}"
     issues=$((issues + 1))
   fi
 
-  if [[ -f "$HOME/.claude/commands/execute-gemini.md" ]]; then
-    echo -e "  ${GREEN}✓${NC} Slash command:  /execute-gemini"
-  else
-    echo -e "  ${RED}✗${NC} Slash command:  /execute-gemini not found"
-    echo -e "    ${DIM}Run install.sh to fix${NC}"
-    issues=$((issues + 1))
-  fi
 
   # 6. Project config
   echo ""
@@ -357,6 +351,7 @@ is_capacity_error() {
     "$log_file" 2>/dev/null
 }
 
+
 # ── Phase 2: Gemini executes plan ──────────────────────
 run_gemini_execute() {
   local plan_file="$1"
@@ -370,7 +365,6 @@ run_gemini_execute() {
     return 1
   fi
 
-  # GEMINI_MODEL 환경 변수가 명시적으로 설정된 경우 단일 모델만 시도 (기존 동작 보존)
   local models=()
   if [[ -n "${GEMINI_MODEL:-}" ]]; then
     models=("${GEMINI_MODEL}")
@@ -378,12 +372,10 @@ run_gemini_execute() {
     models=("${GEMINI_FALLBACK_MODELS[@]}")
   fi
 
-  local total=${#models[@]}
-  local attempt=0
   local used_model=""
   local final_exit_code=1
+  local backoff=30
 
-  # 로그 초기화
   : > "$log_file"
 
   echo ""
@@ -394,130 +386,81 @@ run_gemini_execute() {
   echo ""
 
   for model in "${models[@]}"; do
-    attempt=$((attempt + 1))
-    log_info "Trying ${model}..."
-    {
-      echo ""
-      echo "[${model}] — $(date '+%Y-%m-%d %H:%M:%S')"
-    } >> "$log_file"
-
-    local exit_code=0
-    local attempt_out attempt_err
-    attempt_out=$(mktemp)
-    attempt_err=$(mktemp)
-
-    # 백그라운드 실행 — stdout/stderr 분리 (stderr는 로그 파일로만, 터미널에 출력 안 함)
-    gemini \
-      --model "$model" \
-      --yolo \
-      -p "You are an implementation agent. Read the plan file and execute ALL tasks.
-
-CRITICAL — Progress Logging Rules:
-1. Before starting each Task, print EXACTLY this format (blank lines included):
-
-###########################################
-#  [Task N/TOTAL] Task title
-###########################################
-
-2. Before each Step, print:
-   ▶ [Step N.X] Step description
-3. After each Step completes, print:
-   ✓ [Step N.X] Done  (on success)
-   ✗ [Step N.X] FAIL: <one-line reason>  (on failure)
-4. After each Task completes, print:
-
-   ✅ [Task N] COMPLETE
-###########################################
-
-5. After ALL Tasks are done, print:
-
-###########################################
-#  SUMMARY
-###########################################
-✓ Task 1: title
-✗ Task 2: title (reason)
-Result: X/Y tasks succeeded
-###########################################
-
-FORBIDDEN Tools:
-- NEVER use Playwright, browser, or any MCP browser tools. This is a CLI-only environment.
-- NEVER attempt to launch a browser for verification. Use curl, wget, or CLI commands instead.
-- For visual verification steps (screenshots, UI checks), SKIP them with the marker below.
-
-Other Rules:
-- If a step requires a browser, GUI, or visual verification that cannot be done in CLI, print:
-   ⊘ [Step N.X] SKIP: requires visual/browser verification
-  Then move to the next step. Do NOT mark the entire task as cancelled.
-- If a step fails, log the error and continue to the next step.
-- Do NOT suppress or omit progress markers. Every task and step MUST have its marker printed.
-
-Plan file to read and execute: $plan_file
-
-Start by reading the plan file to count total tasks, then execute each task in order with progress markers." \
-      > "$attempt_out" 2> "$attempt_err" &
-    local gemini_pid=$!
-
-    # 첫 응답 대기 (최대 5초) — 사용량 초과는 stderr에 거의 즉시 반환됨
-    local wait_count=0
-    while [[ $wait_count -lt 10 ]] && kill -0 "$gemini_pid" 2>/dev/null; do
-      if is_capacity_error "$attempt_err" || is_capacity_error "$attempt_out" || [[ -s "$attempt_out" ]]; then
-        break
+    for attempt in 1 2; do
+      if [[ $attempt -eq 2 ]]; then
+        log_info "⏳ Rate limit — ${backoff}초 후 재시도 (${model})..."
+        sleep "$backoff"
+        backoff=$((backoff * 2))
       fi
-      sleep 0.5
-      wait_count=$((wait_count + 1))
-    done
 
-    if is_capacity_error "$attempt_err" || is_capacity_error "$attempt_out"; then
-      # 사용량 초과 — 즉시 다음 모델로 (상세 에러는 로그에만 기록)
-      kill "$gemini_pid" 2>/dev/null
-      wait "$gemini_pid" 2>/dev/null
+      log_info "Trying ${model} (Attempt ${attempt}/2)..."
+      {
+        echo ""
+        echo "[${model} | Attempt ${attempt}] — $(date '+%Y-%m-%d %H:%M:%S')"
+      } >> "$log_file"
+
+      local exit_code=0
+      local attempt_out attempt_err
+      attempt_out=$(mktemp)
+      attempt_err=$(mktemp)
+
+      local plan_prompt
+      plan_prompt="You are an implementation agent. Execute the following plan step by step. Complete all tasks:\n\n$(cat "$plan_file")"
+
+      gemini \
+        --model "$model" \
+        --yolo \
+        -p "$plan_prompt" \
+        > "$attempt_out" 2> "$attempt_err" &
+      local gemini_pid=$!
+
+      # Wait for a moment to check for immediate capacity errors
+      sleep 1 
+
+      if is_capacity_error "$attempt_err" || is_capacity_error "$attempt_out"; then
+        kill "$gemini_pid" 2>/dev/null
+        wait "$gemini_pid" 2>/dev/null
+        cat "$attempt_out" >> "$log_file"; cat "$attempt_err" >> "$log_file"
+        rm -f "$attempt_out" "$attempt_err"
+        log_warn "⚠ ${model} capacity exhausted."
+        continue # To the next attempt
+      fi
+
+      # If no immediate error, start streaming output
+      echo ""
+      log_ok "✓ ${model} connected! Working..."
+      echo ""
+      tail -f "$attempt_out" &
+      local tail_pid=$!
+
+      wait "$gemini_pid" 2>/dev/null || exit_code=$?
+      sleep 0.3
+      kill "$tail_pid" 2>/dev/null
+      wait "$tail_pid" 2>/dev/null
+
       cat "$attempt_out" >> "$log_file"
       cat "$attempt_err" >> "$log_file"
-      rm -f "$attempt_out" "$attempt_err"
-      log_warn "⚠ ${model} capacity exhausted → trying next model"
-      if [[ $attempt -lt $total ]]; then
+
+      if [[ $exit_code -eq 0 ]]; then
+        rm -f "$attempt_out" "$attempt_err"
+        used_model="$model"
+        final_exit_code=0
+        break 2 # Break both loops on success
+      fi
+
+      if is_capacity_error "$attempt_err" || is_capacity_error "$attempt_out"; then
+        rm -f "$attempt_out" "$attempt_err"
+        echo ""
+        log_warn "⚠ ${model} capacity exhausted during work!"
+        # This will continue to the next attempt or next model
         continue
       fi
-      break
-    fi
-
-    # 정상 실행 감지 — 실시간 스트리밍 시작
-    echo ""
-    log_ok "✓ ${model} connected! Working..."
-    echo ""
-    tail -f "$attempt_out" &
-    local tail_pid=$!
-
-    wait "$gemini_pid" 2>/dev/null || exit_code=$?
-    sleep 0.3
-    kill "$tail_pid" 2>/dev/null
-    wait "$tail_pid" 2>/dev/null
-
-    cat "$attempt_out" >> "$log_file"
-    # stderr는 로그에만 기록 (터미널 출력 없음)
-    cat "$attempt_err" >> "$log_file"
-
-    if [[ $exit_code -eq 0 ]]; then
+      
+      # Any other error, break from this model's attempts and try next model
       rm -f "$attempt_out" "$attempt_err"
-      used_model="$model"
-      final_exit_code=0
-      break
-    fi
-
-    # 실행 중 사용량 초과 — 에러 숨기고 다음 모델로 폴백
-    if is_capacity_error "$attempt_err" || is_capacity_error "$attempt_out"; then
-      rm -f "$attempt_out" "$attempt_err"
-      echo ""
-      log_warn "⚠ ${model} capacity exhausted during work! Switching model..."
-      if [[ $attempt -lt $total ]]; then
-        continue
-      fi
-      break
-    fi
-
-    # 용량 오류가 아닌 다른 오류 → 루프 종료
-    rm -f "$attempt_out" "$attempt_err"
-    break
+      log_error "✗ ${model} failed with a non-capacity error. Check log."
+      break # Break from attempt loop, go to next model
+    done
   done
 
   echo ""
@@ -538,8 +481,7 @@ Start by reading the plan file to count total tasks, then execute each task in o
       echo ""
       echo "[Failed] — $(date '+%Y-%m-%d %H:%M:%S')"
     } >> "$log_file"
-    log_error "✗ All models failed"
-    log_info "Check log: cat $log_file"
+    log_error "✗ All Gemini CLI models failed. Check log: $log_file"
   fi
 
   return $final_exit_code
@@ -650,8 +592,6 @@ main() {
 
   # 직접 실행 (서브쉘 아님) — stdin/stdout 그대로 터미널에 연결
   command claude \
-    --tools "Read,Glob,Grep,Write,Bash(gemini *,cplan *,nohup *)" \
-    --disallowedTools "Edit" \
     --append-system-prompt "$system_prompt" \
     || true
 

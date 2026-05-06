@@ -28,8 +28,7 @@ echo -e "${BOLD}╚════════════════════�
 echo ""
 echo "  The following will be removed:"
 echo "    ~/.local/bin/cplan"
-echo "    ~/.claude/profiles/plan-only/CLAUDE.md"
-echo "    ~/.claude/commands/execute-gemini.md"
+echo "    ~/.claude/profiles/gemini-worker/CLAUDE.md"
 echo "    GEMINI_API_KEY from ~/.claude/env"
 echo "    GEMINI_API_KEY and PATH entries from shell RC"
 echo ""
@@ -48,21 +47,13 @@ else
   log_skip "~/.local/bin/cplan"
 fi
 
-# ── plan-only profile ────────────────────────────────────
-if [[ -f "$HOME/.claude/profiles/plan-only/CLAUDE.md" ]]; then
-  rm -f "$HOME/.claude/profiles/plan-only/CLAUDE.md"
-  rmdir "$HOME/.claude/profiles/plan-only" 2>/dev/null || true
-  log_ok "Removed: ~/.claude/profiles/plan-only/"
+# ── gemini-worker profile ────────────────────────────────
+if [[ -f "$HOME/.claude/profiles/gemini-worker/CLAUDE.md" ]]; then
+  rm -f "$HOME/.claude/profiles/gemini-worker/CLAUDE.md"
+  rmdir "$HOME/.claude/profiles/gemini-worker" 2>/dev/null || true
+  log_ok "Removed: ~/.claude/profiles/gemini-worker/"
 else
-  log_skip "~/.claude/profiles/plan-only/CLAUDE.md"
-fi
-
-# ── execute-gemini command ────────────────────────────────
-if [[ -f "$HOME/.claude/commands/execute-gemini.md" ]]; then
-  rm -f "$HOME/.claude/commands/execute-gemini.md"
-  log_ok "Removed: ~/.claude/commands/execute-gemini.md"
-else
-  log_skip "~/.claude/commands/execute-gemini.md"
+  log_skip "~/.claude/profiles/gemini-worker/CLAUDE.md"
 fi
 
 # ── ~/.claude/env — remove GEMINI_API_KEY ─────────────────

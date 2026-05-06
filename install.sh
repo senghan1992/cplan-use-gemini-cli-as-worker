@@ -75,7 +75,7 @@ GITHUB_RAW="https://raw.githubusercontent.com/senghan1992/cplan-use-gemini-cli-a
 # ── Paths ────────────────────────────────────────────────
 BIN_DIR="$HOME/.local/bin"
 CLAUDE_DIR="$HOME/.claude"
-PROFILE_DIR="$CLAUDE_DIR/profiles/plan-only"
+PROFILE_DIR="$CLAUDE_DIR/profiles/gemini-worker"
 ENV_FILE="$CLAUDE_DIR/env"
 
 # shell RC 파일 탐지 (PATH 및 env 설정용)
@@ -187,7 +187,7 @@ fi
 
 # ── Step 3: Install cplan files ──────────────────────────
 log_info "Step 3/6  Installing cplan files..."
-mkdir -p "$BIN_DIR" "$PROFILE_DIR" "$HOME/.claude/commands"
+mkdir -p "$BIN_DIR" "$PROFILE_DIR"
 
 _install_file() {
   local src_rel="$1" dst="$2"
@@ -202,11 +202,8 @@ _install_file "bin/cplan"                        "$BIN_DIR/cplan"
 chmod +x "$BIN_DIR/cplan"
 log_ok "cplan → $BIN_DIR/cplan"
 
-_install_file "profiles/plan-only/CLAUDE.md"    "$PROFILE_DIR/CLAUDE.md"
-log_ok "plan-only profile → $PROFILE_DIR/CLAUDE.md"
-
-_install_file "commands/execute-gemini.md"       "$HOME/.claude/commands/execute-gemini.md"
-log_ok "/execute-gemini → $HOME/.claude/commands/execute-gemini.md"
+_install_file "profiles/gemini-worker/CLAUDE.md"  "$PROFILE_DIR/CLAUDE.md"
+log_ok "gemini-worker profile → $PROFILE_DIR/CLAUDE.md"
 
 # ── Step 4: Gemini authentication ─────────────────────────
 echo ""
